@@ -1,0 +1,51 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # Check daily at 08:00 UTC
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find new upstream versions
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the latest 10 upstream rusty_v8 releases
+          UPSTREAM=$(gh api repos/denoland/rusty_v8/releases --jq '.[0:10] | .[].tag_name' | sed 's/^v//')
+
+          # Get our existing releases
+          OURS=$(gh api repos/${{ github.repository }}/releases --jq '.[].tag_name' | sed 's/^v//')
+
+          # Find versions we don't have yet
+          MISSING=""
+          for ver in $UPSTREAM; do
+            if ! echo "$OURS" | grep -qx "$ver"; then
+              MISSING="$MISSING $ver"
+            fi
+          done
+
+          MISSING=$(echo "$MISSING" | xargs)  # trim
+          echo "missing=$MISSING" >> "$GITHUB_OUTPUT"
+          if [ -n "$MISSING" ]; then
+            echo "New versions to build: $MISSING"
+          else
+            echo "All up to date"
+          fi
+
+      - name: Trigger builds for missing versions
+        if: steps.check.outputs.missing != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for ver in ${{ steps.check.outputs.missing }}; do
+            echo "Triggering build for v$ver..."
+            gh workflow run build.yml -f v8_version="$ver"
+            sleep 5  # avoid rate limiting
+          done
