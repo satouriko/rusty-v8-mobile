@@ -66,14 +66,12 @@ jobs:
           echo "GN=/tmp/gn/gn" >> "$GITHUB_ENV"
 
       # rusty_v8 源码缓存（按 V8 版本，跨 target 共享）
-      # 排除 third_party/rust-toolchain：build.rs 会下载 OS-specific 的 rustc 二进制进去
-      # （macOS ARM64 binary 不能在 Linux 上跑）
+      # 注意：actions/cache@v4 的 `!` exclusion pattern 对目录不可靠，
+      # 改为 restore 后显式 rm -rf third_party/rust-toolchain——V8 build.rs 会按当前 OS 重新下载
       - uses: actions/cache/restore@v4
         id: src-cache
         with:
-          path: |
-            rusty_v8-src
-            !rusty_v8-src/third_party/rust-toolchain
+          path: rusty_v8-src
           key: rusty-v8-src-v${{ inputs.v8_version }}
 
       # rusty_v8 源码：用 actions/checkout（GitHub 原生，对 chromium.googlesource.com
@@ -88,6 +86,12 @@ jobs:
           submodules: recursive
           path: rusty_v8-src
           clean: false
+
+      # rust-toolchain 是 OS-specific 二进制（macOS 上的 bindgen 不能在 Linux 跑）。
+      # 缓存可能是另一个 OS 上保存的，强制删除让 V8 build.rs 按当前 OS 重新下载。
+      # 无则 no-op。
+      - name: Purge OS-specific rust-toolchain
+        run: rm -rf rusty_v8-src/third_party/rust-toolchain
 
       - name: Create build crate
         run: |
@@ -257,13 +261,15 @@ jobs:
 
       # 保存 rusty_v8-src（save 抓整个目录，包括 build.rs 放进来的
       # android_platform/catapult/build/linux 等未追踪文件）
-      # 排除 third_party/rust-toolchain：OS-specific 二进制不能跨 OS 共享
+      # save 前删除 third_party/rust-toolchain——OS-specific 二进制不能跨 OS 共享
+      - name: Remove rust-toolchain before save
+        if: always() && steps.src-cache.outputs.cache-hit != 'true'
+        run: rm -rf rusty_v8-src/third_party/rust-toolchain
+
       - uses: actions/cache/save@v4
         if: always() && steps.src-cache.outputs.cache-hit != 'true'
         with:
-          path: |
-            rusty_v8-src
-            !rusty_v8-src/third_party/rust-toolchain
+          path: rusty_v8-src
           key: rusty-v8-src-v${{ inputs.v8_version }}
 
       # 保存 V8 编译产物——即使 build 失败也保存，下次重试可以复用已完成的部分
