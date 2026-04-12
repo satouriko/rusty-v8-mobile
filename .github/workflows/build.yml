@@ -198,13 +198,12 @@ jobs:
           TOML
 
           # BINDGEN_EXTRA_CLANG_ARGS 的取舍：
-          # - v140+ 有 tools/get_bindgen_args.py 自己给 bindgen 配置参数，
-          #   我们设 env var 会污染 V8 内部 ninja 的 host bindgen 调用
-          #   （把 aarch64 target 附加到 x86 host 命令，导致 -msse3 unsupported）
-          # - v130-v139 没有这个脚本，build.rs 里的 bindgen 依赖外部 env var
-          #   找到 NDK sysroot 里的 C++ 头（cstdint 等）
-          # 以文件存在与否区分版本
-          if [ ! -f "$V8_SRC/tools/get_bindgen_args.py" ]; then
+          # - v130-v139 用 bindgen 0.70.1，target 推断有 bug（iOS sim triple 错）
+          #   且 build.rs 里的 bindgen 找不到 C++ 头（cstdint 等），需外部 env var
+          # - v140+ 用 bindgen 0.72.0，修了 target 推断；设 env var 反而污染
+          #   V8 内部 ninja 的 host bindgen 调用（-msse3 unsupported on aarch64）
+          # 用 tools/rust_toolchain.py 文件存在与否区分版本（v140+ 才有）
+          if [ ! -f "$V8_SRC/tools/rust_toolchain.py" ]; then
             NDK_SYSROOT="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
             ARCH_INCLUDE="aarch64-linux-android"
             if [ "${{ matrix.target }}" = "x86_64-linux-android" ]; then
@@ -220,7 +219,7 @@ jobs:
         run: |
           V8_SRC="$GITHUB_WORKSPACE/rusty_v8-src"
           # 和 Android 同样的逻辑：v140+ 不需要，v130-v139 需要
-          if [ ! -f "$V8_SRC/tools/get_bindgen_args.py" ]; then
+          if [ ! -f "$V8_SRC/tools/rust_toolchain.py" ]; then
             if [ "${{ matrix.target }}" = "aarch64-apple-ios-sim" ]; then
               SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
               CLANG_TARGET="arm64-apple-ios${IOS_DEPLOYMENT_TARGET}-simulator"
