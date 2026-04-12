@@ -114,6 +114,7 @@ jobs:
 
       # rusty_v8 git clone 缓存（按 V8 版本，跨 target 共享，同 OS 都能用）
       # 整个仓库 + submodules ~几 GB，clone 要 5-10 分钟
+      # restore-keys 允许跨版本命中：不同版本的 db 共用，fetch 只拉增量
       - uses: actions/cache/restore@v4
         id: git-cache
         with:
@@ -121,6 +122,8 @@ jobs:
             ~/.cargo/git/checkouts/rusty_v8-*
             ~/.cargo/git/db/rusty_v8-*
           key: rusty-v8-git-${{ runner.os }}-v${{ inputs.v8_version }}
+          restore-keys: |
+            rusty-v8-git-${{ runner.os }}-
 
       # V8 编译产物（target 专属）
       # - gn_out: ninja 编译产物（几 GB）
