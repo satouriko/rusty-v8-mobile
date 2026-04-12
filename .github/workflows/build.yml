@@ -76,6 +76,14 @@ jobs:
           workspaces: v8-build
           key: ${{ matrix.target }}-${{ inputs.v8_version }}
 
+      # V8 gn_out 是编译产物的大头（几 GB），rust-cache 不包含它
+      - uses: actions/cache@v4
+        with:
+          path: |
+            v8-build/target/${{ matrix.target }}/release/gn_out
+            v8-build/target/${{ matrix.target }}/release/clang
+          key: v8-gn-out-${{ matrix.target }}-${{ inputs.v8_version }}
+
       - name: Prepare Android NDK
         if: contains(matrix.target, 'android')
         run: |
