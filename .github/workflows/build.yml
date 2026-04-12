@@ -30,7 +30,8 @@ jobs:
 
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # v140+ 冷构建接近 120min，留足 headroom
+    timeout-minutes: 150
 
     env:
       # 所有影响构建产物的外部版本号集中在这里。改动会通过 cache key 失效缓存。
