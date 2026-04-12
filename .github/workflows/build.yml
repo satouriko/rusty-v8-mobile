@@ -92,19 +92,30 @@ jobs:
       # Key 由 env 里所有版本变量组成。改动任一版本会失效对应缓存。
       # 用 restore + save 分离，save 用 if:always() 在 build 失败时也保存，
       # 这样下次重试可以复用已下载/已编译的部分。
+      # NDK 缓存（跨 V8 版本复用，存到独立路径）
+      - uses: actions/cache/restore@v4
+        id: ndk-cache
+        if: contains(matrix.target, 'android')
+        with:
+          path: /tmp/android-ndk-${{ env.NDK_VERSION }}
+          key: android-ndk-${{ env.NDK_VERSION }}
+
+      # V8 版本相关的编译产物和依赖
+      # - gn_out: ninja 编译产物（几 GB）
+      # - clang: Chromium 下载的 clang（~640MB）
+      # - android_platform, catapult: V8 build.rs 克隆的 Chromium 仓库（版本相关）
+      # - build/linux: Linux sysroots（版本相关）
       - uses: actions/cache/restore@v4
         id: v8-cache
         with:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
-            ~/.cargo/registry/src/index.crates.io-*/v8-*/third_party/android_ndk
             ~/.cargo/registry/src/index.crates.io-*/v8-*/third_party/android_platform
             ~/.cargo/registry/src/index.crates.io-*/v8-*/third_party/catapult
-            ~/.cargo/registry/src/index.crates.io-*/v8-*/third_party/android_toolchain
             ~/.cargo/registry/src/index.crates.io-*/v8-*/build/linux
-          # Android key 绑 NDK + API level；iOS key 绑 iOS deployment target
-          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-ndk{2}-api{3}', matrix.target, inputs.v8_version, env.NDK_VERSION, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
+          # Android key 绑 API level；iOS key 绑 iOS deployment target
+          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
 
       - name: Prepare Android NDK
         if: contains(matrix.target, 'android')
@@ -114,18 +125,22 @@ jobs:
           V8_SRC=$(find ~/.cargo/registry/src -maxdepth 3 -name "build.rs" -path "*/v8-*/*" -printf "%h\n" 2>/dev/null | head -1)
           echo "V8_SRC=$V8_SRC" >> "$GITHUB_ENV"
 
-          # Download Android NDK ${{ env.NDK_VERSION }}
-          NDK_DIR="$V8_SRC/third_party/android_ndk"
-          if [ ! -d "$NDK_DIR" ]; then
+          # NDK 存在独立路径（/tmp/android-ndk-<version>），V8 里用 symlink 引用
+          NDK_CACHE_DIR="/tmp/android-ndk-${NDK_VERSION}"
+          if [ ! -d "$NDK_CACHE_DIR" ]; then
             curl -L -o /tmp/ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip"
-            unzip -q -d "$V8_SRC/third_party/" /tmp/ndk.zip
-            mv "$V8_SRC/third_party/android-ndk-${NDK_VERSION}" "$NDK_DIR"
+            unzip -q -d /tmp /tmp/ndk.zip
+            mv "/tmp/android-ndk-${NDK_VERSION}" "$NDK_CACHE_DIR" 2>/dev/null || true
             rm /tmp/ndk.zip
           fi
 
+          # Symlink 进 V8 期望的位置
+          NDK_DIR="$V8_SRC/third_party/android_ndk"
+          ln -sfn "$NDK_CACHE_DIR" "$NDK_DIR"
+
           # Symlink android_toolchain/ndk -> android_ndk
           mkdir -p "$V8_SRC/third_party/android_toolchain"
-          ln -sf "$NDK_DIR" "$V8_SRC/third_party/android_toolchain/ndk"
+          ln -sfn "$NDK_DIR" "$V8_SRC/third_party/android_toolchain/ndk"
 
           # Create pydeps stubs
           AB="$V8_SRC/build/android"
@@ -187,20 +202,24 @@ jobs:
             cargo build --target ${{ matrix.target }} --release
           fi
 
-      # 保存缓存——即使 build 失败也保存，这样下次重试能复用已完成的部分
+      # 保存 NDK 缓存（跨 V8 版本复用）
+      - uses: actions/cache/save@v4
+        if: always() && contains(matrix.target, 'android') && steps.ndk-cache.outputs.cache-hit != 'true'
+        with:
+          path: /tmp/android-ndk-${{ env.NDK_VERSION }}
+          key: android-ndk-${{ env.NDK_VERSION }}
+
+      # 保存 V8 版本相关缓存——即使 build 失败也保存，下次重试可以复用已完成的部分
       - uses: actions/cache/save@v4
         if: always() && steps.v8-cache.outputs.cache-hit != 'true'
         with:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
-            ~/.cargo/registry/src/index.crates.io-*/v8-*/third_party/android_ndk
             ~/.cargo/registry/src/index.crates.io-*/v8-*/third_party/android_platform
             ~/.cargo/registry/src/index.crates.io-*/v8-*/third_party/catapult
-            ~/.cargo/registry/src/index.crates.io-*/v8-*/third_party/android_toolchain
             ~/.cargo/registry/src/index.crates.io-*/v8-*/build/linux
-          # Android key 绑 NDK + API level；iOS key 绑 iOS deployment target
-          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-ndk{2}-api{3}', matrix.target, inputs.v8_version, env.NDK_VERSION, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
+          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
 
       - name: Extract artifacts
         run: |
