@@ -112,9 +112,7 @@ jobs:
           path: /tmp/android-ndk-${{ env.NDK_VERSION }}
           key: android-ndk-${{ env.NDK_VERSION }}
 
-      # rusty_v8 git clone 缓存（按 V8 版本，跨 target 共享，同 OS 都能用）
-      # 整个仓库 + submodules ~几 GB，clone 要 5-10 分钟
-      # restore-keys 允许跨版本命中：不同版本的 db 共用，fetch 只拉增量
+      # rusty_v8 git clone 缓存（按 V8 版本，restore-keys 让 db 跨版本增量 fetch）
       - uses: actions/cache/restore@v4
         id: git-cache
         with:
@@ -125,17 +123,31 @@ jobs:
           restore-keys: |
             rusty-v8-git-${{ runner.os }}-
 
-      # V8 编译产物（target 专属）
+      # Chromium 外部仓库（build.rs 里 git clone 的，无 ref，跨 V8 版本共用）
+      - uses: actions/cache/restore@v4
+        id: chromium-repos-cache
+        if: contains(matrix.target, 'android')
+        with:
+          path: |
+            ~/.cargo/git/checkouts/rusty_v8-*/*/third_party/android_platform
+            ~/.cargo/git/checkouts/rusty_v8-*/*/third_party/catapult
+          key: chromium-repos-${{ runner.os }}
+
+      # V8 编译产物（target + V8 版本专属，有 restore-keys 让 clang 可能跨小版本复用）
       # - gn_out: ninja 编译产物（几 GB）
       # - clang: Chromium 下载的 clang（~640MB）
+      # - build/linux: V8 pin 的 Linux sysroots
       - uses: actions/cache/restore@v4
         id: v8-cache
         with:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
+            ~/.cargo/git/checkouts/rusty_v8-*/*/build/linux
           # Android key 绑 API level；iOS key 绑 iOS deployment target
           key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
+          restore-keys: |
+            v8-deps-${{ matrix.target }}-
 
       - name: Prepare Android NDK
         if: contains(matrix.target, 'android')
@@ -242,7 +254,7 @@ jobs:
           path: /tmp/android-ndk-${{ env.NDK_VERSION }}
           key: android-ndk-${{ env.NDK_VERSION }}
 
-      # 保存 rusty_v8 git clone 缓存（跨 target 共享）
+      # 保存 rusty_v8 git clone 缓存
       - uses: actions/cache/save@v4
         if: always() && steps.git-cache.outputs.cache-hit != 'true'
         with:
@@ -251,6 +263,15 @@ jobs:
             ~/.cargo/git/db/rusty_v8-*
           key: rusty-v8-git-${{ runner.os }}-v${{ inputs.v8_version }}
 
+      # 保存 Chromium 外部仓库（跨版本复用）
+      - uses: actions/cache/save@v4
+        if: always() && contains(matrix.target, 'android') && steps.chromium-repos-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/git/checkouts/rusty_v8-*/*/third_party/android_platform
+            ~/.cargo/git/checkouts/rusty_v8-*/*/third_party/catapult
+          key: chromium-repos-${{ runner.os }}
+
       # 保存 V8 编译产物——即使 build 失败也保存，下次重试可以复用已完成的部分
       - uses: actions/cache/save@v4
         if: always() && steps.v8-cache.outputs.cache-hit != 'true'
@@ -258,6 +279,7 @@ jobs:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
+            ~/.cargo/git/checkouts/rusty_v8-*/*/build/linux
           key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
 
       - name: Extract artifacts
