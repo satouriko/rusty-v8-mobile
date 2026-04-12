@@ -119,9 +119,9 @@ jobs:
           path: |
             ~/.cargo/git/checkouts/rusty_v8-*
             ~/.cargo/git/db/rusty_v8-*
-          key: rusty-v8-git-${{ runner.os }}-v${{ inputs.v8_version }}
+          key: rusty-v8-git-v${{ inputs.v8_version }}
           restore-keys: |
-            rusty-v8-git-${{ runner.os }}-
+            rusty-v8-git-
 
       # Chromium 外部仓库（build.rs 里 git clone 的，无 ref，跨 V8 版本共用）
       - uses: actions/cache/restore@v4
@@ -131,7 +131,7 @@ jobs:
           path: |
             ~/.cargo/git/checkouts/rusty_v8-*/*/third_party/android_platform
             ~/.cargo/git/checkouts/rusty_v8-*/*/third_party/catapult
-          key: chromium-repos-${{ runner.os }}
+          key: chromium-repos
 
       # V8 编译产物（target + V8 版本专属，有 restore-keys 让 clang 可能跨小版本复用）
       # - gn_out: ninja 编译产物（几 GB）
@@ -261,7 +261,7 @@ jobs:
           path: |
             ~/.cargo/git/checkouts/rusty_v8-*
             ~/.cargo/git/db/rusty_v8-*
-          key: rusty-v8-git-${{ runner.os }}-v${{ inputs.v8_version }}
+          key: rusty-v8-git-v${{ inputs.v8_version }}
 
       # 保存 Chromium 外部仓库（跨版本复用）
       - uses: actions/cache/save@v4
@@ -270,7 +270,7 @@ jobs:
           path: |
             ~/.cargo/git/checkouts/rusty_v8-*/*/third_party/android_platform
             ~/.cargo/git/checkouts/rusty_v8-*/*/third_party/catapult
-          key: chromium-repos-${{ runner.os }}
+          key: chromium-repos
 
       # 保存 V8 编译产物——即使 build 失败也保存，下次重试可以复用已完成的部分
       - uses: actions/cache/save@v4
