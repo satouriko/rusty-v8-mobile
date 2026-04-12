@@ -197,13 +197,16 @@ jobs:
           rustflags = ["-C", "link-args=-Wl,--allow-multiple-definition"]
           TOML
 
-          # BINDGEN_EXTRA_CLANG_ARGS 的取舍：
-          # - v130-v139 用 bindgen 0.70.1，target 推断有 bug（iOS sim triple 错）
-          #   且 build.rs 里的 bindgen 找不到 C++ 头（cstdint 等），需外部 env var
-          # - v140+ 用 bindgen 0.72.0，修了 target 推断；设 env var 反而污染
-          #   V8 内部 ninja 的 host bindgen 调用（-msse3 unsupported on aarch64）
-          # 用 tools/rust_toolchain.py 文件存在与否区分版本（v140+ 才有）
+          # bindgen clang 配置：v130 和 v140+ 处理方式不同
+          # - v130-v139：没有 V8 internal Rust build，设 BINDGEN_EXTRA_CLANG_ARGS
+          #   覆盖 crate bindgen 的 sysroot/target（内部无 bindgen 可污染）
+          # - v140+：有 V8 internal ninja bindgen，设 env var 会污染其 host 调用。
+          #   改用 LIBCLANG_PATH 指向 NDK 自带的 libclang（它知道 Android sysroot 位置），
+          #   V8 internal bindgen 用 --libclang-path CLI 参数指定自己的 libclang，
+          #   不读 LIBCLANG_PATH env，互不干扰。
+          NDK_LIB="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/lib"
           if [ ! -f "$V8_SRC/tools/rust_toolchain.py" ]; then
+            # v130-v139: 外部 env var 模式
             NDK_SYSROOT="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
             ARCH_INCLUDE="aarch64-linux-android"
             if [ "${{ matrix.target }}" = "x86_64-linux-android" ]; then
@@ -212,6 +215,9 @@ jobs:
             echo "LIBCLANG_PATH=/usr/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
             BINDGEN_VAR="BINDGEN_EXTRA_CLANG_ARGS_$(echo '${{ matrix.target }}' | tr '-' '_')"
             echo "${BINDGEN_VAR}=--sysroot=$NDK_SYSROOT -isystem $NDK_SYSROOT/usr/include/c++/v1 -isystem $NDK_SYSROOT/usr/include -isystem $NDK_SYSROOT/usr/include/$ARCH_INCLUDE --target=${{ matrix.target }}${ANDROID_API_LEVEL}" >> "$GITHUB_ENV"
+          else
+            # v140+: NDK libclang 模式
+            echo "LIBCLANG_PATH=$NDK_LIB" >> "$GITHUB_ENV"
           fi
 
       - name: Prepare iOS bindgen args (v130-v139 only)
