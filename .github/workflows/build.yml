@@ -33,6 +33,11 @@ jobs:
     # v140+ 冷构建接近 120min，留足 headroom
     timeout-minutes: 150
 
+    # actions: write 用于 prune 老的 v8-deps cache
+    permissions:
+      actions: write
+      contents: read
+
     env:
       # 所有影响构建产物的外部版本号集中在这里。改动会通过 cache key 失效缓存。
       NDK_VERSION: r26c
@@ -291,12 +296,28 @@ jobs:
       # 保存 V8 编译产物——每次 run 都 save 一份（key 带 run_id 保唯一），
       # restore 会用 prefix 拿最新的。这样半成品 → 更完整 → 完整 build 能逐步累积。
       - uses: actions/cache/save@v4
+        id: v8-cache-save
         if: always()
         with:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
           key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-r{3}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL, github.run_id) || format('v8-deps-{0}-v{1}-ios{2}-r{3}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET, github.run_id) }}
+
+      # 删除同一 prefix 下其他 run_id 的老 cache，避免多 run 积累把 10GB 配额吃光
+      # （会让 src-cache/ndk-cache 被 LRU 挤掉）
+      - name: Prune old v8-deps caches for this target
+        if: always() && steps.v8-cache-save.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}-', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
+          KEEP_KEY: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-r{3}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL, github.run_id) || format('v8-deps-{0}-v{1}-ios{2}-r{3}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET, github.run_id) }}
+        run: |
+          # 列出所有同 prefix 的 cache，删除不等于 KEEP_KEY 的
+          gh api --paginate "repos/${{ github.repository }}/actions/caches?key=$PREFIX" \
+            --jq '.actions_caches[] | select(.key != env.KEEP_KEY) | .id' | while read id; do
+              [ -n "$id" ] && gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" || true
+            done
 
       - name: Extract artifacts
         run: |
