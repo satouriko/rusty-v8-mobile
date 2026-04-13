@@ -361,10 +361,34 @@ jobs:
 
       - run: ls -lh *.a.gz *.rs 2>/dev/null || true
 
+      # 明确判断 latest：只有当本次 v8_version 是所有现存 release 里的
+      # semver-max 时才标 Latest。避免补老 major patch（如 146.9.1）时
+      # 把真正最新的 147.x 顶掉。
+      - name: Determine if this should be marked Latest
+        id: latest_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 拉已有 release，比较 $VERSION 和它们里的 max semver
+          EXISTING=$(gh release list --json tagName --jq '.[].tagName' 2>/dev/null | sed 's/^v//')
+          VERSION="${{ inputs.v8_version }}"
+          MAX_EXISTING=$(echo "$EXISTING" | sort -V | tail -1)
+          # 如果没现有 release 或 $VERSION > $MAX_EXISTING → latest
+          if [ -z "$MAX_EXISTING" ]; then
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          elif [ "$(printf '%s\n%s\n' "$MAX_EXISTING" "$VERSION" | sort -V | tail -1)" = "$VERSION" ] \
+             && [ "$VERSION" != "$MAX_EXISTING" ]; then
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Existing max: v$MAX_EXISTING, current: v$VERSION"
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.v8_version }}
           name: "rusty_v8 v${{ inputs.v8_version }}"
+          make_latest: ${{ steps.latest_check.outputs.make_latest }}
           body: |
             Prebuilt `librusty_v8.a` for mobile targets, compiled from [rusty_v8 v${{ inputs.v8_version }}](https://github.com/denoland/rusty_v8/releases/tag/v${{ inputs.v8_version }}).
 
