@@ -136,21 +136,15 @@ jobs:
       # V8 编译产物（target + V8 版本专属，host OS 隐含在 matrix.target 里）
       # - gn_out: ninja 编译产物（几 GB，含 host 和 target 的 .o/.a）
       # - clang: Chromium 下载的 host clang（~640MB）
-      #
-      # Key 策略：save 用 <prefix>-<run_id> 保证每次 run 都能覆盖上次保存的半成品
-      # （GitHub cache key 必须唯一，否则 save 会跳过）；restore 用 prefix fallback
-      # 拿最新的一份。这样失败的 partial build 下次能继续、成功的 full build 之后
-      # 再 retry 几乎秒过。不加 cross-version restore-keys 避免老版本 gn_out 污染
-      # ninja 时间戳状态。
+      # 用固定 key。actions/cache/save 遇到同 key 会跳过（不会覆盖），
+      # 所以 save 前先 API 删除旧 cache 强制刷新。这样 partial build 也能逐次累积。
       - uses: actions/cache/restore@v4
         id: v8-cache
         with:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
-          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-r{3}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL, github.run_id) || format('v8-deps-{0}-v{1}-ios{2}-r{3}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET, github.run_id) }}
-          restore-keys: |
-            ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}-', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
+          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
 
       - name: Prepare Android NDK
         if: contains(matrix.target, 'android')
@@ -293,31 +287,23 @@ jobs:
           path: rusty_v8-src
           key: rusty-v8-src-v${{ inputs.v8_version }}
 
-      # 保存 V8 编译产物——每次 run 都 save 一份（key 带 run_id 保唯一），
-      # restore 会用 prefix 拿最新的。这样半成品 → 更完整 → 完整 build 能逐步累积。
+      # 保存 V8 编译产物——每次 run 都强制刷新：先 API 删旧 cache（actions/cache/save
+      # 遇到同 key 会静默跳过），再 save 新的。这样 partial build 能逐次累积。
+      - name: Delete stale v8-deps cache
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
+        run: |
+          gh api -X DELETE "repos/${{ github.repository }}/actions/caches?key=$KEY" 2>/dev/null || true
+
       - uses: actions/cache/save@v4
-        id: v8-cache-save
         if: always()
         with:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
-          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-r{3}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL, github.run_id) || format('v8-deps-{0}-v{1}-ios{2}-r{3}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET, github.run_id) }}
-
-      # 删除同一 prefix 下其他 run_id 的老 cache，避免多 run 积累把 10GB 配额吃光
-      # （会让 src-cache/ndk-cache 被 LRU 挤掉）
-      - name: Prune old v8-deps caches for this target
-        if: always() && steps.v8-cache-save.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREFIX: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}-', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
-          KEEP_KEY: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-r{3}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL, github.run_id) || format('v8-deps-{0}-v{1}-ios{2}-r{3}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET, github.run_id) }}
-        run: |
-          # 列出所有同 prefix 的 cache，删除不等于 KEEP_KEY 的
-          gh api --paginate "repos/${{ github.repository }}/actions/caches?key=$PREFIX" \
-            --jq '.actions_caches[] | select(.key != env.KEEP_KEY) | .id' | while read id; do
-              [ -n "$id" ] && gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" || true
-            done
+          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
 
       - name: Extract artifacts
         run: |
