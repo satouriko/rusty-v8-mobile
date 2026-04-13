@@ -18,46 +18,61 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Find upstream versions newer than our latest
+      - name: Find upstream versions to build
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 只追"比我们最新 release 更新"的版本——老的已经有意跳过的不追溯。
-          # V8 正常 ~6 周一版，每天 cron 检查一次最多新增 0-1 个版本。
           UPSTREAM=$(gh api repos/denoland/rusty_v8/releases --jq '.[0:20] | .[].tag_name' | sed 's/^v//')
           OURS=$(gh api repos/${{ github.repository }}/releases --jq '.[].tag_name' | sed 's/^v//')
 
-          MAX_OURS=$(echo "$OURS" | sort -V | tail -1)
-          if [ -z "$MAX_OURS" ]; then
-            echo "::error::no existing releases — can't determine cutoff"
-            exit 1
-          fi
-          echo "Our latest: v$MAX_OURS"
+          NEW=$(UPSTREAM="$UPSTREAM" OURS="$OURS" python3 <<'PY'
+          import os
 
-          # sort -V 语义化升序，$ver > $MAX_OURS 就是新版本
-          NEW=""
-          for ver in $(echo "$UPSTREAM" | sort -V); do
-            if [ "$(printf '%s\n%s\n' "$MAX_OURS" "$ver" | sort -V | tail -1)" = "$ver" ] \
-               && [ "$ver" != "$MAX_OURS" ]; then
-              NEW="$NEW $ver"
-            fi
-          done
-          NEW=$(echo "$NEW" | xargs)
+          def parse(v):
+              return tuple(int(x) for x in v.split("."))
+
+          upstream = os.environ["UPSTREAM"].split()
+          ours = os.environ["OURS"].split()
+          ours_set = set(ours)
+          ours_parsed = [parse(v) for v in ours]
+          max_overall = max(ours_parsed) if ours_parsed else (0, 0, 0)
+
+          # 规则（按 major 分桶比较）：
+          # - 同 major 我们已经有 release：触发 V iff V > max(ours in same major)
+          #   例：我们有 146.9.0，上游出 146.9.1 → 触发；上游出 146.2.1 → 不触发
+          # - 同 major 完全没 release（或全新 major）：触发 V iff V > max(ours overall)
+          #   例：我们最新 147.1.0，上游出 148.0.0 → 触发；138.0.0 不触发
+          #
+          # 老版本不追溯：我们有意跳过的 minor / patch（比如 140.0.0，因为
+          # 我们直接从 139 跳到 140.2）靠 "max in same major" 截断。
+          to_trigger = []
+          for v in upstream:
+              if v in ours_set:
+                  continue
+              vp = parse(v)
+              same_major = [o for o in ours_parsed if o[0] == vp[0]]
+              threshold = max(same_major) if same_major else max_overall
+              if vp > threshold:
+                  to_trigger.append(v)
+
+          # 升序触发——GitHub 自己排 macOS runner 队列
+          to_trigger.sort(key=parse)
+          print(" ".join(to_trigger))
+          PY
+          )
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           if [ -n "$NEW" ]; then
-            echo "Newer than v$MAX_OURS: $NEW"
+            echo "To trigger: $NEW"
           else
             echo "All up to date"
           fi
 
-      - name: Trigger builds for newer versions
+      - name: Trigger builds for new versions
         if: steps.check.outputs.new != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 按升序逐个触发——一天通常 0-1 个新版本，哪怕积了几个（假期没
-          # 跑之类）也都按顺序排入 matrix 队列，GitHub 自己会 macOS 并发限流
           for ver in ${{ steps.check.outputs.new }}; do
             echo "Triggering build for v$ver..."
             gh workflow run build.yml -f v8_version="$ver"
