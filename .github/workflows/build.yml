@@ -131,14 +131,21 @@ jobs:
       # V8 编译产物（target + V8 版本专属，host OS 隐含在 matrix.target 里）
       # - gn_out: ninja 编译产物（几 GB，含 host 和 target 的 .o/.a）
       # - clang: Chromium 下载的 host clang（~640MB）
-      # 不加 restore-keys——老版本 gn_out 混进来会让 ninja 时间戳状态混乱
+      #
+      # Key 策略：save 用 <prefix>-<run_id> 保证每次 run 都能覆盖上次保存的半成品
+      # （GitHub cache key 必须唯一，否则 save 会跳过）；restore 用 prefix fallback
+      # 拿最新的一份。这样失败的 partial build 下次能继续、成功的 full build 之后
+      # 再 retry 几乎秒过。不加 cross-version restore-keys 避免老版本 gn_out 污染
+      # ninja 时间戳状态。
       - uses: actions/cache/restore@v4
         id: v8-cache
         with:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
-          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
+          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-r{3}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL, github.run_id) || format('v8-deps-{0}-v{1}-ios{2}-r{3}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET, github.run_id) }}
+          restore-keys: |
+            ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}-', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
 
       - name: Prepare Android NDK
         if: contains(matrix.target, 'android')
@@ -281,14 +288,15 @@ jobs:
           path: rusty_v8-src
           key: rusty-v8-src-v${{ inputs.v8_version }}
 
-      # 保存 V8 编译产物——即使 build 失败也保存，下次重试可以复用已完成的部分
+      # 保存 V8 编译产物——每次 run 都 save 一份（key 带 run_id 保唯一），
+      # restore 会用 prefix 拿最新的。这样半成品 → 更完整 → 完整 build 能逐步累积。
       - uses: actions/cache/save@v4
-        if: always() && steps.v8-cache.outputs.cache-hit != 'true'
+        if: always()
         with:
           path: |
             v8-build/target/${{ matrix.target }}/release/gn_out
             v8-build/target/${{ matrix.target }}/release/clang
-          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL) || format('v8-deps-{0}-v{1}-ios{2}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET) }}
+          key: ${{ contains(matrix.target, 'android') && format('v8-deps-{0}-v{1}-api{2}-r{3}', matrix.target, inputs.v8_version, env.ANDROID_API_LEVEL, github.run_id) || format('v8-deps-{0}-v{1}-ios{2}-r{3}', matrix.target, inputs.v8_version, env.IOS_DEPLOYMENT_TARGET, github.run_id) }}
 
       - name: Extract artifacts
         run: |
