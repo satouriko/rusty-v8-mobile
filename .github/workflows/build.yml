@@ -51,7 +51,13 @@ jobs:
 
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libclang-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libclang-dev
+          # Chromium v142+ libc++ 需要 Clang 19+（用了 __builtin_clzg 等新 builtins）
+          # 装 LLVM 19 给顶层 bindgen 用。V8 internal 还是用自己 --libclang-path 的 clang，不受影响
+          curl -sSf https://apt.llvm.org/llvm.sh | sudo bash -s 19
+          sudo apt-get install -y libclang-19-dev
 
       - name: Install deps (macOS)
         if: runner.os == 'macOS'
@@ -233,9 +239,9 @@ jobs:
             echo "LIBCLANG_PATH=/usr/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
             echo "${BINDGEN_VAR}=--sysroot=$NDK_SYSROOT -isystem $NDK_SYSROOT/usr/include/c++/v1 -isystem $NDK_SYSROOT/usr/include -isystem $NDK_SYSROOT/usr/include/$ARCH_INCLUDE --target=${{ matrix.target }}${ANDROID_API_LEVEL}" >> "$GITHUB_ENV"
           else
-            # v140+: Chromium 自带的新 libc++，和 NDK r26c 的旧 libc++ 不兼容
-            # （_LIBCPP_INLINE_VISIBILITY 已去除）。必须用 V8 自带的 libc++ 头
-            echo "LIBCLANG_PATH=$NDK_LIB" >> "$GITHUB_ENV"
+            # v140+: Chromium 新 libc++（要 Clang 19+ 的 __builtin_clzg 等），用 llvm-19
+            # 的 libclang 给顶层 bindgen 用；V8 自带的 libc++ 头替换 NDK 的
+            echo "LIBCLANG_PATH=/usr/lib/llvm-19/lib" >> "$GITHUB_ENV"
             echo "${BINDGEN_VAR}=--sysroot=$NDK_SYSROOT -isystem $V8_SRC/third_party/libc++/src/include -isystem $NDK_SYSROOT/usr/include -isystem $NDK_SYSROOT/usr/include/$ARCH_INCLUDE" >> "$GITHUB_ENV"
           fi
 
