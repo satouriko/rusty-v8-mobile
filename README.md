@@ -13,7 +13,14 @@ Prebuilt `librusty_v8.a` static libraries for mobile targets that the [official 
 
 ## Usage
 
-Download the `.a.gz` for your target from [Releases](https://github.com/satouriko/rusty-v8-mobile/releases), decompress, then:
+Set `RUSTY_V8_MIRROR` so rusty_v8's build script fetches the prebuilt archive instead of compiling V8:
+
+```bash
+RUSTY_V8_MIRROR=https://github.com/satouriko/rusty-v8-mobile/releases/download \
+  cargo build --target aarch64-linux-android
+```
+
+Or download the `.a.gz` for your target manually from [Releases](https://github.com/satouriko/rusty-v8-mobile/releases), decompress, then:
 
 ```bash
 RUSTY_V8_ARCHIVE=/path/to/librusty_v8_release_aarch64-linux-android.a \
