@@ -120,7 +120,7 @@ v8-deps-<target>-v<version>-ios<deployment_target>   # iOS gn_out + clang
 
 下次 retry 时完整 cache 的 target 秒过（~2min），部分 cache 的 ninja 重建几 min 到十几 min，仍远快于冷起的 60-110min。这是**期望行为**——失败 run 的残局也值得保存，迭代修到全绿。
 
-**有一个遗留迷惑案例**（v8_version=142.2.0 的热缓存 retry run 24320385806）：`aarch64-apple-ios-sim` 在更早的 run 24318352657 里是 success（按理 cache 完整），但 retry 时跑了 43.5min，比同样在 24318352657 也 success 的 `aarch64-apple-ios`（retry 1.7min）慢 25 倍。两者的 v8-deps cache 都是 264MB 一样大。暂时无解释，怀疑是 macOS runner 调度噪声或 simulator SDK 解析差异。将来若反复观察到同一现象，再深挖 log。
+**概率性遗留案例**：warm retry 下某一个 iOS target 偶尔完全无法利用 cache，耗时接近 cold build。已观察 2 次（2026-04-13 sim 43min、2026-04-14 device 70min），受影响 target 不固定。触发点已定位到 `rusty_v8-src/third_party/rust-toolchain/VERSION` 被 ninja 判 dirty（我们 `Purge OS-specific rust-toolchain` step 的必然副作用）；为何偶尔扩散到全图 rebuild 还未定位——需下次复现时靠 DIAG step 对比 `.ninja_log`。详见 [`docs/ios-warm-cache-rebuild-investigation.md`](./ios-warm-cache-rebuild-investigation.md)。
 
 ### 3.4 缓存信号诊断
 
